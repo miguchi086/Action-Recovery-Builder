@@ -31,8 +31,12 @@ on:
         description: Makefile Name
         required: true
         default: 'pb_m52xq'
+      BUILD_RELEASE:
+        description: Build Release (trunk_staging, ap3a, bp1a...)
+        required: true
+        default: 'trunk_staging'
       BUILD_TARGET:
-        description: Build Target
+        description: Build Target (recovery, boot, vendor_boot)
         required: true
         default: 'recovery'
       PBRP_VERSION:
@@ -57,6 +61,7 @@ jobs:
         echo "Device Path: ${{ github.event.inputs.DEVICE_PATH }}"
         echo "Device Name: ${{ github.event.inputs.DEVICE_NAME }}"
         echo "Makefile Name: ${{ github.event.inputs.MAKEFILE_NAME }}"
+        echo "Build Release: ${{ github.event.inputs.BUILD_RELEASE }}"
         echo "Build Target: ${{ github.event.inputs.BUILD_TARGET }}.img"
         echo "PBRP Version: ${{ github.event.inputs.PBRP_VERSION }}"
         echo "::endgroup::"
@@ -130,7 +135,14 @@ jobs:
       run: |
         export ALLOW_MISSING_DEPENDENCIES=true
         source build/envsetup.sh
-        lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng && make clean && mka pbrp -j$(nproc --all)
+        if [ -d build/release/release_configs ]; then
+          echo "Available releases:"
+          ls build/release/release_configs
+        fi
+        lunch ${{ github.event.inputs.MAKEFILE_NAME }}-${{ github.event.inputs.BUILD_RELEASE }}-eng
+        make clean
+        TARGET="${{ github.event.inputs.BUILD_TARGET }}"
+        mka "${TARGET//_/}image" -j$(nproc --all)
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Set Date Variables
@@ -145,23 +157,27 @@ jobs:
         ls -a ${{ steps.pwd.outputs.workspace-folder }}/out/target/product/ && echo
         ls -a ${{ steps.pwd.outputs.workspace-folder }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/ && echo
         cd out/target/product/${{ github.event.inputs.DEVICE_NAME }}
-        tar -cvf PBRP-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.PBRP_VERSION }}-${{ steps.date.outputs.DATE_LONG }}.tar ${{ github.event.inputs.BUILD_TARGET }}.img
-        mv ${{ github.event.inputs.BUILD_TARGET }}.img PBRP-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.PBRP_VERSION }}-${{ steps.date.outputs.DATE_LONG }}.img
-        mv PBRP*.zip PBRP-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.PBRP_VERSION }}-${{ steps.date.outputs.DATE_LONG }}.zip
+        NAME="PBRP-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.PBRP_VERSION }}-${{ steps.date.outputs.DATE_LONG }}"
+        tar -cvf "$NAME.tar" ${{ github.event.inputs.BUILD_TARGET }}.img
+        mv ${{ github.event.inputs.BUILD_TARGET }}.img "$NAME.img"
+        ZIP=$(ls PBRP*.zip 2>/dev/null | head -n 1 || true)
+        if [ -n "$ZIP" ]; then
+          mv "$ZIP" "$NAME.zip"
+        fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Upload to Release
       uses: softprops/action-gh-release@v2
       with:
-        files: | 
-          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/PBRP-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.PBRP_VERSION }}-${{ steps.date.outputs.DATE_LONG }}.img
-          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/PBRP-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.PBRP_VERSION }}-${{ steps.date.outputs.DATE_LONG }}.tar
-          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/PBRP-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.PBRP_VERSION }}-${{ steps.date.outputs.DATE_LONG }}.zip
+        files: |
+          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/PBRP-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.PBRP_VERSION }}-${{ steps.date.outputs.DATE_LONG }}.*
         name: pbrp-${{ github.event.inputs.DEVICE_NAME }}-${{ steps.date.outputs.DATE_SHORT }}
         tag_name: ${{ steps.date.outputs.DATE_TAG }}
         body: |
           Manifest: ${{ github.event.inputs.MANIFEST_BRANCH }}
           Device: ${{ github.event.inputs.DEVICE_NAME }}
+          Release: ${{ github.event.inputs.BUILD_RELEASE }}
           Target: ${{ github.event.inputs.BUILD_TARGET }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
