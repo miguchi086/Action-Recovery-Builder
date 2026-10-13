@@ -152,10 +152,10 @@ jobs:
         ls -a ${{ steps.pwd.outputs.workspace-folder }}/out/target/product/ && echo
         ls -a ${{ steps.pwd.outputs.workspace-folder }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/ && echo
         cd out/target/product/${{ github.event.inputs.DEVICE_NAME }}
-        NAME="PBRP-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.PBRP_VERSION }}-${{ steps.date.outputs.DATE_LONG }}"
+        NAME="AERA-${{ github.event.inputs.DEVICE_NAME }}-${{ steps.date.outputs.DATE_LONG }}"
         tar -cvf "$NAME.tar" ${{ github.event.inputs.BUILD_TARGET }}.img
         mv ${{ github.event.inputs.BUILD_TARGET }}.img "$NAME.img"
-        ZIP=$(ls PBRP*.zip 2>/dev/null | head -n 1 || true)
+        ZIP=$(ls AERA*.zip 2>/dev/null | head -n 1 || true)
         if [ -n "$ZIP" ]; then
           mv "$ZIP" "$NAME.zip"
         fi
@@ -165,8 +165,8 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/PBRP-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.PBRP_VERSION }}-${{ steps.date.outputs.DATE_LONG }}.*
-        name: pbrp-${{ github.event.inputs.DEVICE_NAME }}-${{ steps.date.outputs.DATE_SHORT }}
+          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA-${{ github.event.inputs.DEVICE_NAME }}-${{ steps.date.outputs.DATE_LONG }}.*
+        name: aera-${{ github.event.inputs.DEVICE_NAME }}-${{ steps.date.outputs.DATE_SHORT }}
         tag_name: ${{ steps.date.outputs.DATE_TAG }}
         body: |
           Manifest: ${{ github.event.inputs.MANIFEST_BRANCH }}
