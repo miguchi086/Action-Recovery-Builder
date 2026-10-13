@@ -32,7 +32,7 @@ on:
         required: true
         default: 'twrp_peridot'
       BUILD_RELEASE:
-        description: Build Release (trunk_staging, ap3a, bp1a...)
+        description: Build Release (trunk_staging, ap3a, bp1a, bp2a...)
         required: true
         default: 'bp2a'
       BUILD_TARGET:
@@ -40,119 +40,102 @@ on:
         required: true
         default: 'recovery'
 
+env:
+  CCACHE_DIR: /home/runner/.ccache
+
 jobs:
   build:
     if: github.event.repository.owner.id == github.event.sender.id
     runs-on: ubuntu-24.04
+    timeout-minutes: 355
     permissions:
       contents: write
     steps:
-    - name: Display Run Parameters
-      run: |
-        echo "::group::User Environment Variables"
-        echo "Manifest URL: ${{ github.event.inputs.MANIFEST_URL }}"
-        echo "Manifest Branch: ${{ github.event.inputs.MANIFEST_BRANCH }}"
-        echo "Device Tree URL: ${{ github.event.inputs.DEVICE_TREE_URL }}"
-        echo "Device Tree Branch: ${{ github.event.inputs.DEVICE_TREE_BRANCH }}"
-        echo "Device Path: ${{ github.event.inputs.DEVICE_PATH }}"
-        echo "Device Name: ${{ github.event.inputs.DEVICE_NAME }}"
-        echo "Makefile Name: ${{ github.event.inputs.MAKEFILE_NAME }}"
-        echo "Build Release: ${{ github.event.inputs.BUILD_RELEASE }}"
-        echo "Build Target: ${{ github.event.inputs.BUILD_TARGET }}.img"
-        echo "::endgroup::"
-
     - name: Check Out
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
 
     - name: Cleanup
       uses: rokibhasansagar/slimhub_actions@main
 
     - name: Prepare the environment
       run: |
-        sudo apt update && sudo apt upgrade -y
-        DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
-            linux-modules-extra-$(uname -r) \
-            gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib \
-            libc6-dev lib32ncurses-dev x11proto-core-dev libx11-dev tree lib32z-dev libgl1-mesa-dev libxml2-utils \
-            xsltproc bc ccache lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libsdl1.2-dev \
-            build-essential libgtk-3-dev libglu1-mesa-dev freeglut3-dev git libxml2 lzop pngcrush schedtool squashfs-tools \
-            imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libncurses6 python3 tar
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: 'latest'
-
-    - name: Install OpenJDK
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'zulu'
-        java-version: '11'
-
-    - name: Install repo
-      run: |
-        mkdir ~/bin
-        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        sudo apt-get update
+        DEBIAN_FRONTEND=noninteractive sudo apt-get install -yq --no-install-recommends \
+            gperf gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses-dev lib32z1-dev \
+            x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc bc ccache \
+            liblz4-tool libncurses-dev build-essential git lzop pngcrush schedtool \
+            squashfs-tools python3 zip unzip flex bison curl
+        mkdir -p ~/bin
+        curl -sS https://storage.googleapis.com/git-repo-downloads/repo -o ~/bin/repo
         chmod a+x ~/bin/repo
         sudo ln -sf ~/bin/repo /usr/bin/repo
-
-    - name: Configure Git identity and URL rewriting (SSH -> HTTPS)
-      run: |
         git config --global user.name "Saad"
         git config --global user.email "saadelasfur@gmail.com"
         git config --global url."https://github.com/".insteadOf "git@github.com:"
         git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
-
-    - name: Initialize repo
-      run: |
-        mkdir workspace
-        cd workspace
-        echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
-        repo init --depth=1 -u ${{ github.event.inputs.MANIFEST_URL }} -b ${{ github.event.inputs.MANIFEST_BRANCH }}
-      id: pwd
-
-    - name: Repo Sync
-      run: |
-        repo sync -j$(nproc --all) --force-sync
-      working-directory: workspace
-
-    - name: Clone device tree
-      run: |
-        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@master
       with:
         swap-size-gb: 24
 
+    - name: Restore ccache
+      uses: actions/cache/restore@v4
+      with:
+        path: /home/runner/.ccache
+        key: ccache-${{ github.event.inputs.MANIFEST_BRANCH }}-${{ github.run_id }}
+        restore-keys: |
+          ccache-${{ github.event.inputs.MANIFEST_BRANCH }}-
+
+    - name: Initialize and sync repo
+      id: pwd
+      run: |
+        mkdir workspace
+        cd workspace
+        echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
+        repo init --depth=1 --no-tags -u ${{ github.event.inputs.MANIFEST_URL }} -b ${{ github.event.inputs.MANIFEST_BRANCH }}
+        repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j8 --force-sync
+        git clone --depth=1 ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
+
     - name: Building recovery
+      timeout-minutes: 320
       run: |
         export ALLOW_MISSING_DEPENDENCIES=true
+        export USE_CCACHE=1
+        export CCACHE_EXEC=/usr/bin/ccache
+        export CCACHE_BASEDIR="$PWD"
+        export CCACHE_NOHASHDIR=true
+        ccache -M 8G
+        ccache -o compression=true
+        ccache -o compression_level=1
         source build/envsetup.sh
         if [ -d build/release/release_configs ]; then
-          echo "Available releases:"
           ls build/release/release_configs
         fi
         lunch ${{ github.event.inputs.MAKEFILE_NAME }}-${{ github.event.inputs.BUILD_RELEASE }}-eng
-        make clean
         TARGET="${{ github.event.inputs.BUILD_TARGET }}"
         mka "${TARGET//_/}image" -j$(nproc --all)
+        ccache -s
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
-    - name: Set Date Variables
-      run: |
-        echo "DATE_SHORT=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
-        echo "DATE_TAG=$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
-        echo "DATE_LONG=$(date +%Y%m%d-%H%M)" >> $GITHUB_OUTPUT
-      id: date
+    - name: Save ccache
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        path: /home/runner/.ccache
+        key: ccache-${{ github.event.inputs.MANIFEST_BRANCH }}-${{ github.run_id }}
 
     - name: Archive the files
+      id: pkg
       run: |
-        ls -a ${{ steps.pwd.outputs.workspace-folder }}/out/target/product/ && echo
-        ls -a ${{ steps.pwd.outputs.workspace-folder }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/ && echo
         cd out/target/product/${{ github.event.inputs.DEVICE_NAME }}
-        NAME="AERA-${{ github.event.inputs.DEVICE_NAME }}-${{ steps.date.outputs.DATE_LONG }}"
+        ls -a
+        NAME="AERA-${{ github.event.inputs.DEVICE_NAME }}-$(date +%Y%m%d-%H%M)"
+        echo "NAME=$NAME" >> $GITHUB_OUTPUT
+        echo "DATE_SHORT=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+        echo "DATE_TAG=$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
         tar -cvf "$NAME.tar" ${{ github.event.inputs.BUILD_TARGET }}.img
         mv ${{ github.event.inputs.BUILD_TARGET }}.img "$NAME.img"
         ZIP=$(ls AERA*.zip 2>/dev/null | head -n 1 || true)
@@ -165,9 +148,9 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA-${{ github.event.inputs.DEVICE_NAME }}-${{ steps.date.outputs.DATE_LONG }}.*
-        name: aera-${{ github.event.inputs.DEVICE_NAME }}-${{ steps.date.outputs.DATE_SHORT }}
-        tag_name: ${{ steps.date.outputs.DATE_TAG }}
+          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ steps.pkg.outputs.NAME }}.*
+        name: aera-${{ github.event.inputs.DEVICE_NAME }}-${{ steps.pkg.outputs.DATE_SHORT }}
+        tag_name: ${{ steps.pkg.outputs.DATE_TAG }}
         body: |
           Manifest: ${{ github.event.inputs.MANIFEST_BRANCH }}
           Device: ${{ github.event.inputs.DEVICE_NAME }}
@@ -175,4 +158,3 @@ jobs:
           Target: ${{ github.event.inputs.BUILD_TARGET }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
