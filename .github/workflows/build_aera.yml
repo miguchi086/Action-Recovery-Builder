@@ -97,7 +97,9 @@ jobs:
         echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
         repo init --depth=1 --no-tags -u ${{ github.event.inputs.MANIFEST_URL }} -b ${{ github.event.inputs.MANIFEST_BRANCH }}
         repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j8 --force-sync
+        rm -rf ./${{ github.event.inputs.DEVICE_PATH }}
         git clone --depth=1 ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
+        git -C ./${{ github.event.inputs.DEVICE_PATH }} log -1 --format="Device tree commit: %H %s"
 
     - name: Building recovery
       timeout-minutes: 320
